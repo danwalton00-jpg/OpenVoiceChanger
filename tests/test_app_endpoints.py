@@ -306,3 +306,45 @@ class TestConvertDefaults:
 
         source = inspect.getsource(ModelManager.process_audio)
         assert 'settings.get("f0_method", DEFAULT_F0_METHOD)' in source
+
+
+
+class TestWebSocketSettingsValidation:
+    def test_non_finite_audio_settings_are_ignored(self):
+        from backend.routers.websocket import _apply_settings
+
+        state = {
+            "pitch_shift": 2.0,
+            "formant_shift": 1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+        _apply_settings(
+            {
+                "pitch_shift": float("nan"),
+                "formant_shift": float("inf"),
+                "index_rate": float("-inf"),
+                "rms_mix_rate": float("nan"),
+                "protect": float("inf"),
+            },
+            state,
+        )
+
+        assert state == {
+            "pitch_shift": 2.0,
+            "formant_shift": 1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+
+    def test_bypass_requires_a_boolean_value(self):
+        from backend.routers.websocket import _apply_settings
+
+        state = {"bypass": False}
+        _apply_settings({"bypass": "false"}, state)
+        assert state["bypass"] is False
+
+        _apply_settings({"bypass": True}, state)
+        assert state["bypass"] is True
