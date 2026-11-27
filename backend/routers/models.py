@@ -81,8 +81,14 @@ async def activate_model(request: Request, name: str) -> dict:
         result = await asyncio.to_thread(manager.activate_model, name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Model not found: {name}")
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except RuntimeError:
+        # Model loader errors may include local filesystem paths, runtime
+        # details, or checkpoint internals. Keep diagnostics in server logs.
+        logger.exception("Model activation failed for %s", name)
+        raise HTTPException(
+            status_code=500,
+            detail="Model activation failed. Check the server logs for details.",
+        )
 
     return result
 
