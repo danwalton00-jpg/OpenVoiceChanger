@@ -21,6 +21,8 @@ router = APIRouter()
 
 # How often to send latency status messages (seconds)
 STATUS_INTERVAL = 1.0
+MAX_CONCURRENT_AUDIO_CONNECTIONS = 2
+_active_audio_connections = 0
 MIN_SAMPLE_RATE = 8000
 MAX_SAMPLE_RATE = 192000
 MIN_CHUNK_SIZE = 128
@@ -93,7 +95,13 @@ async def audio_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=1013, reason="Update in progress")
         return
 
+    global _active_audio_connections
+    if _active_audio_connections >= MAX_CONCURRENT_AUDIO_CONNECTIONS:
+        await websocket.close(code=1013, reason="Free server is busy. Try again shortly.")
+        return
+
     await websocket.accept()
+    _active_audio_connections += 1
     client_id = id(websocket)
     logger.info("WebSocket connected: %s", client_id)
 
@@ -180,6 +188,7 @@ async def audio_websocket(websocket: WebSocket) -> None:
             pass
     finally:
         await asyncio.to_thread(model_manager.release_stream, conn_state["stream_id"])
+        _active_audio_connections = max(0, _active_audio_connections - 1)
 
 
 def _get_chain(conn_state: dict) -> EffectsChain:
