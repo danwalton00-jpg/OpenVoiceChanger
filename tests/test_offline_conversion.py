@@ -372,3 +372,53 @@ class TestAdvancedSettingsReachThePipeline:
         assert args[self.INDEX_RATE] == pytest.approx(1.0)
         assert args[self.FILTER_RADIUS] == 0
         assert args[self.PROTECT] == pytest.approx(0.5)
+
+
+
+class InactiveRecordingManager:
+    def __init__(self):
+        self.released = []
+
+    def get_active_model(self):
+        return None
+
+    def process_audio(self, audio, settings):
+        raise AssertionError("Model inference must not run without an active model")
+
+    def release_stream(self, stream_id):
+        self.released.append(stream_id)
+
+
+class TestNoSilentDSPFallback:
+    def test_requested_model_conversion_fails_without_active_model(self):
+        from backend.routers.convert import ActiveModelRequiredError, _render
+
+        with pytest.raises(ActiveModelRequiredError, match="No active voice model"):
+            _render(
+                np.ones(2048, dtype=np.float32),
+                SAMPLE_RATE,
+                InactiveRecordingManager(),
+                True,
+                4.0,
+                0.0,
+                "pm",
+                {},
+            )
+
+    def test_explicit_dsp_only_mode_remains_available(self):
+        from backend.routers.convert import _render
+
+        manager = InactiveRecordingManager()
+        rendered = _render(
+            np.ones(2048, dtype=np.float32) * 0.1,
+            SAMPLE_RATE,
+            manager,
+            False,
+            0.0,
+            0.0,
+            "pm",
+            {},
+        )
+
+        assert len(rendered) == 2048
+        assert manager.released == []
