@@ -12,6 +12,7 @@ const ACCEPTED = '.wav,.mp3,.flac,.ogg,.m4a,.aiff';
 function FileConverter({ voice, effects, activeModel, f0Methods = FALLBACK_F0_METHODS, updateBusy = false, onUpdateBlockChange }) {
   const [file, setFile] = useState(null);
   const [useModel, setUseModel] = useState(true);
+  const [allowDspOnly, setAllowDspOnly] = useState(false);
   const [converting, setConverting] = useState(false);
   const [result, setResult] = useState(null); // {url, name, size, downloaded}
   const [error, setError] = useState(null);
@@ -59,7 +60,7 @@ function FileConverter({ voice, effects, activeModel, f0Methods = FALLBACK_F0_ME
   };
 
   const handleConvert = async () => {
-    if (!file || converting || updateBusy) return;
+    if (!file || converting || updateBusy || (!activeModel && !allowDspOnly)) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setConverting(true);
@@ -71,7 +72,7 @@ function FileConverter({ voice, effects, activeModel, f0Methods = FALLBACK_F0_ME
         formantShift: voice.formant,
         f0Method: selectedF0.id,
         effects,
-        useModel: useModel && Boolean(activeModel),
+        useModel: Boolean(activeModel) && useModel,
         // The panel promises "uses current studio settings", so the Voice Lab
         // advanced controls have to travel with the render too.
         indexRate: voice.indexRate,
@@ -208,17 +209,20 @@ function FileConverter({ voice, effects, activeModel, f0Methods = FALLBACK_F0_ME
       </div>
 
       <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
-        <label className={`flex min-w-0 flex-wrap items-center gap-2.5 text-sm ${activeModel ? 'text-fg-secondary' : 'text-fg-faint'}`}>
+        <label className="flex min-w-0 flex-wrap items-center gap-2.5 text-sm text-fg-secondary">
           <input
             type="checkbox"
-            checked={useModel && Boolean(activeModel)}
-            disabled={!activeModel || converting}
-            onChange={(event) => setUseModel(event.target.checked)}
+            checked={activeModel ? useModel : allowDspOnly}
+            disabled={converting}
+            onChange={(event) => {
+              if (activeModel) setUseModel(event.target.checked);
+              else setAllowDspOnly(event.target.checked);
+            }}
             className="h-4 w-4 flex-shrink-0 accent-primary"
           />
-          Run through active model
+          {activeModel ? 'Run through active model' : 'Explicitly allow DSP-only conversion (A/B test)'}
           <span className="break-all text-xs text-fg-faint">
-            {activeModel ? `(${activeModel})` : '(no model active — DSP only)'}
+            {activeModel ? `(${activeModel})` : '(no active voice model)'}
           </span>
         </label>
 
@@ -236,7 +240,7 @@ function FileConverter({ voice, effects, activeModel, f0Methods = FALLBACK_F0_ME
           <button
             type="button"
             onClick={handleConvert}
-            disabled={!file || updateBusy}
+            disabled={!file || updateBusy || (!activeModel && !allowDspOnly)}
             data-tone="primary"
             className="frost-control inline-flex min-h-11 items-center justify-center gap-2 px-6 py-2.5 text-sm font-semibold"
           >
@@ -245,6 +249,12 @@ function FileConverter({ voice, effects, activeModel, f0Methods = FALLBACK_F0_ME
           </button>
         )}
       </div>
+
+      {!activeModel && (
+        <p className="mt-3 text-xs text-warn-fg" role="status">
+          No active voice model. Activate an RVC model for voice conversion, or explicitly enable DSP-only conversion for an A/B test.
+        </p>
+      )}
 
       {converting && (
         <p className="mt-3 flex items-center gap-2 text-xs text-fg-subtle" role="status">
