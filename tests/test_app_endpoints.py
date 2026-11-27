@@ -491,3 +491,50 @@ class TestModelActivationErrorDisclosure:
         assert response.status_code == 500
         assert response.json()["detail"] == "Model activation failed. Check the server logs for details."
         assert "/srv/private" not in response.text
+
+
+
+class TestWebSocketConnectionSlotAccounting:
+    def test_concurrent_reservations_never_exceed_the_limit(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from backend.routers import websocket as ws_module
+
+        # Start from a known state; the test exercises the same lock used by
+        # live handshakes and does not open real network connections.
+        with ws_module._audio_connections_lock:
+            original = ws_module._active_audio_connections
+            ws_module._active_audio_connections = 0
+
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                reserved = list(pool.map(
+                    lambda _index: ws_module._reserve_audio_connection_slot(),
+                    range(20),
+                ))
+
+            assert sum(reserved) == ws_module.MAX_CONCURRENT_AUDIO_CONNECTIONS
+            with ws_module._audio_connections_lock:
+                assert ws_module._active_audio_connections == ws_module.MAX_CONCURRENT_AUDIO_CONNECTIONS
+
+            for _ in range(sum(reserved)):
+                ws_module._release_audio_connection_slot()
+
+            with ws_module._audio_connections_lock:
+                assert ws_module._active_audio_connections == 0
+        finally:
+            with ws_module._audio_connections_lock:
+                ws_module._active_audio_connections = original
+
+    def test_release_never_makes_connection_count_negative(self):
+        from backend.routers import websocket as ws_module
+
+        with ws_module._audio_connections_lock:
+            original = ws_module._active_audio_connections
+            ws_module._active_audio_connections = 0
+        try:
+            ws_module._release_audio_connection_slot()
+            with ws_module._audio_connections_lock:
+                assert ws_module._active_audio_connections == 0
+        finally:
+            with ws_module._audio_connections_lock:
+                ws_module._active_audio_connections = original
