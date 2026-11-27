@@ -257,26 +257,34 @@ async def _receive_config(websocket: WebSocket, conn_state: dict) -> dict | None
 def _apply_settings(data: dict, conn_state: dict) -> None:
     """Merge a settings payload (config or live update) into connection state."""
     try:
-        if "pitch_shift" in data:
-            conn_state["pitch_shift"] = float(data["pitch_shift"])
-        if "formant_shift" in data:
-            conn_state["formant_shift"] = float(data["formant_shift"])
-        if "f0_method" in data:
-            conn_state["f0_method"] = str(data["f0_method"])
-        if "index_rate" in data and data["index_rate"] is not None:
-            conn_state["index_rate"] = float(data["index_rate"])
+        # Reject NaN and infinity: they can poison the audio pipeline and
+        # produce silent/invalid output even though float() accepts them.
+        for key in ("pitch_shift", "formant_shift", "index_rate", "rms_mix_rate", "protect"):
+            if key not in data or data[key] is None:
+                continue
+            value = _bounded_float(data[key], -1.0e6, 1.0e6)
+            if value is None:
+                logger.warning("Ignoring invalid %s value %r", key, data[key])
+                continue
+            conn_state[key] = value
+        if "f0_method" in data and isinstance(data["f0_method"], str):
+            conn_state["f0_method"] = data["f0_method"]
         if "filter_radius" in data and data["filter_radius"] is not None:
-            conn_state["filter_radius"] = int(data["filter_radius"])
-        if "rms_mix_rate" in data and data["rms_mix_rate"] is not None:
-            conn_state["rms_mix_rate"] = float(data["rms_mix_rate"])
-        if "protect" in data and data["protect"] is not None:
-            conn_state["protect"] = float(data["protect"])
+            radius = _bounded_int(data["filter_radius"], 0, 16)
+            if radius is not None:
+                conn_state["filter_radius"] = radius
         if "crepe_hop_length" in data and data["crepe_hop_length"] is not None:
-            conn_state["crepe_hop_length"] = int(np.clip(int(data["crepe_hop_length"]), 64, 512))
+            hop = _bounded_int(data["crepe_hop_length"], 64, 512)
+            if hop is not None:
+                conn_state["crepe_hop_length"] = hop
         if "effects" in data and isinstance(data["effects"], dict):
             conn_state["effects"] = data["effects"]
         if "bypass" in data:
-            conn_state["bypass"] = bool(data["bypass"])
+            bypass = _optional_bool(data["bypass"])
+            if bypass is None:
+                logger.warning("Ignoring invalid bypass value %r", data["bypass"])
+            else:
+                conn_state["bypass"] = bypass
     except (TypeError, ValueError) as exc:
         logger.warning("Ignoring invalid settings values: %s", exc)
 
