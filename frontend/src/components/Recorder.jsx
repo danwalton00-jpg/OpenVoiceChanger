@@ -99,7 +99,6 @@ function Recorder({ pipeline }) {
     isRunning,
     isRecording,
     canRecordOutput,
-    recordBlockReason,
     library,
     recordNotice,
     meters,
