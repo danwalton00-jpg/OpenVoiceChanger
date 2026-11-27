@@ -184,7 +184,7 @@ function loadInitialEffects() {
   effects.gain = {
     ...effects.gain,
     enabled: true,
-    db: Math.max(15, Number(effects.gain?.db) || 0),
+    db: Math.max(18, Number(effects.gain?.db) || 0),
   };
 
   return effects;
