@@ -208,6 +208,7 @@ export default function App() {
   const [tab, setTab] = useState(() => readTabFromSearch(window.location.search));
   const [activeModel, setActiveModel] = useState(null);
   const [runtimeConfig, setRuntimeConfig] = useState(DEFAULT_RUNTIME_CONFIG);
+  const [hostedDspOnly, setHostedDspOnly] = useState(false);
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
   const [runtimeChecking, setRuntimeChecking] = useState(false);
   const [runtimeError, setRuntimeError] = useState(null);
@@ -309,6 +310,7 @@ export default function App() {
     setRuntimeChecking(true);
     fetchConfig().then((config) => {
       if (cancelled) return;
+      setHostedDspOnly(Boolean(config?.hosted_dsp_only));
       const next = mergeRuntimeConfig(config);
       // Refresh capabilities only: never change live transport geometry.
       setRuntimeConfig((current) => ({ ...current, runtime: next.runtime, f0Methods: next.f0Methods }));
@@ -328,6 +330,7 @@ export default function App() {
 
     const adopt = (cfg) => {
       if (cancelled) return;
+      setHostedDspOnly(Boolean(cfg?.hosted_dsp_only));
       const nextRuntimeConfig = mergeRuntimeConfig(cfg, storedConfig);
       applyConfig({
         sample_rate: nextRuntimeConfig.sampleRate,
@@ -588,6 +591,12 @@ export default function App() {
       )}
       headerActions={headerActions}
     >
+      {hostedDspOnly && (
+        <div role="status" className="mb-5 rounded-xl border border-line-strong bg-raised p-4 text-sm text-fg-secondary">
+          <p className="font-semibold text-fg">Free hosted mode — DSP effects only</p>
+          <p className="mt-1">Live browser audio effects are available. RVC voice-model upload, activation, and server file conversion are disabled on this free service. Your recordings stay in your browser.</p>
+        </div>
+      )}
       <div {...panelProps('studio')} className="space-y-5 animate-fade-in-up">
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
           <div className="space-y-5">
@@ -658,14 +667,20 @@ export default function App() {
       </div>
 
       <div {...panelProps('converter')} className="mx-auto max-w-3xl animate-fade-in-up">
-        <FileConverter
+        {hostedDspOnly ? (
+          <section className="panel p-6">
+            <p className="panel-kicker">Free hosted mode</p>
+            <h2 className="panel-title">File conversion is disabled</h2>
+            <p className="mt-2 text-sm text-fg-subtle">This public free server accepts live browser audio effects only. File uploads and server-side conversion are disabled to protect shared resources.</p>
+          </section>
+        ) : <FileConverter
           voice={voice}
           effects={effects}
           activeModel={activeModel}
           f0Methods={runtimeConfig.f0Methods}
           updateBusy={updateBusy}
           onUpdateBlockChange={setConverterBlock}
-        />
+        />}
       </div>
 
       {isSettingsOpen ? (
