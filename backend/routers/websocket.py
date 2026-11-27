@@ -430,6 +430,11 @@ async def _handle_binary_frame(
         logger.warning("Invalid audio frame: %s", exc)
         return
 
+    # Reject oversized payloads before allocating DSP work for them.
+    if len(audio) > int(conn_state["chunk_size"]):
+        await websocket.close(code=1009, reason="Audio frame exceeds negotiated chunk size")
+        return
+
     _get_chain(conn_state)
     processed, mode, model_ms, dsp_ms = await asyncio.to_thread(
         _process_frame_sync, audio, model_manager, conn_state
