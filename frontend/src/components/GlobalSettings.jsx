@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import UpdatePanel from './UpdatePanel';
+import ElevenLabsPanel from './ElevenLabsPanel';
 import RuntimeReadiness from './RuntimeReadiness';
 import Toggle from './Toggle';
 import {
@@ -230,6 +231,7 @@ export default function GlobalSettings({
       </div>
 
       <UpdatePanel updates={updates} />
+      <ElevenLabsPanel />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
         <div className="min-w-0">
