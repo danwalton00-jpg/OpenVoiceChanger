@@ -120,6 +120,7 @@ async def lifespan(app: FastAPI):
     logger.info("ONNX Runtime: %s", "available" if _onnx_available else "NOT AVAILABLE — .onnx models won't work")
     logger.info("PyTorch: %s", "available" if _torch_available else "NOT AVAILABLE — .pth/RVC models won't work")
 
+    app.state.hosted_dsp_only = HOSTED_DSP_ONLY
     manager = ModelManager(settings.MODELS_DIR)
     app.state.model_manager = manager
     app.state.preset_store = PresetStore(settings.PRESETS_PATH)
@@ -154,6 +155,8 @@ async def lifespan(app: FastAPI):
         logger.info("Shutdown complete")
 
 
+HOSTED_DSP_ONLY = os.environ.get("OVC_HOSTED_DSP_ONLY", "false").strip().lower() in {"1", "true", "yes"}
+
 app = FastAPI(
     title="OpenVoiceChanger",
     description="Real-time voice changer API",
@@ -184,6 +187,8 @@ async def health_check():
 async def get_config():
     return {
         "version": app.version,
+        "hosted_dsp_only": HOSTED_DSP_ONLY,
+        "hosting_notice": "Free hosted mode: DSP effects only. RVC model upload and activation are disabled." if HOSTED_DSP_ONLY else None,
         "update_instance": app.state.updates.instance,
         "runtime_setup_job": os.environ.get("OVC_RVC_SETUP_JOB"),
         "sample_rate": settings.SAMPLE_RATE,
