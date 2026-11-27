@@ -472,4 +472,5 @@ class TestConversionUploadResourceLimits:
 
         # Decode validation errors remain a client error and do not leak paths.
         assert response.status_code == 400
+        assert response.json()["detail"] == "Could not decode the uploaded audio file."
         assert "private filesystem path" not in response.text
