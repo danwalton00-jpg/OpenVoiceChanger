@@ -128,6 +128,12 @@ async def convert_file(
     crepe_hop_length: int | None = Form(None),
 ) -> Response:
     """Convert an uploaded audio file and return the rendered WAV."""
+    if getattr(request.app.state, "hosted_dsp_only", False):
+        raise HTTPException(
+            status_code=503,
+            detail="File uploads are disabled on the free hosted DSP service. Use live browser audio effects instead.",
+        )
+
     model_manager = getattr(request.app.state, "model_manager", None)
     if model_manager is None:
         raise HTTPException(status_code=503, detail="Model manager not initialized")
