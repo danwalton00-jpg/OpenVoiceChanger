@@ -25,7 +25,32 @@ const WORKLET_URL = `${import.meta.env.BASE_URL}audioWorklet.js`;
 export default function useAudioPipeline(wsHook) {
   // Only the stable callbacks are needed here. Depending on the whole hook
   // object would recreate start/stop every time a latency sample arrives.
-  const { sendAudio, setOnAudioReceived, setStreamSampleRate } = wsHook;
+  const { sendAudio, setOnAudioReceived, setStreamSampleRate, serverStats } = wsHook;
+
+  // A take is only labelled as a converted voice recording when the backend
+  // confirms that a real model is active and model inference is the live mode.
+  // DSP and bypass remain available for monitoring/A-B tests, but are never
+  // silently saved as model-converted audio.
+  const activeModel = serverStats?.activeModel ?? null;
+  const processingMode = serverStats?.mode ?? 'dsp';
+  const modelProcessingError = serverStats?.processingError ?? null;
+  const canRecordConverted = Boolean(
+    activeModel &&
+    !serverStats?.bypass &&
+    !modelProcessingError &&
+    processingMode !== 'dsp' &&
+    processingMode !== 'bypass' &&
+    processingMode !== 'error'
+  );
+  const recordBlockReason = !activeModel
+    ? 'No active voice model — activate a model before recording.'
+    : serverStats?.bypass
+      ? 'Bypass is on — turn it off to record model-converted audio.'
+      : modelProcessingError
+        ? 'Voice model inference failed — check the model runtime before recording.'
+        : !canRecordConverted
+          ? 'DSP-only mode is active — activate an RVC model to record converted audio.'
+          : null;
 
   const [isRunning, setIsRunning] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -133,6 +158,25 @@ export default function useAudioPipeline(wsHook) {
     setRecordNotice(notice);
     return recording;
   }, [meters, addTake]);
+
+  const discardRecording = useCallback((message) => {
+    recordingRef.current = false;
+    recordChunksRef.current = [];
+    recordSamplesRef.current = 0;
+    meters.set({ recordSeconds: 0 });
+    setIsRecording(false);
+    setRecordNotice({
+      tone: 'error',
+      message,
+    });
+  }, [meters]);
+
+  // If the model is removed, bypassed, or inference fails during a take, do
+  // not save a mixed/raw/DSP recording under the converted-recording label.
+  useEffect(() => {
+    if (!recordingRef.current || canRecordConverted) return;
+    discardRecording(recordBlockReason || 'No active voice model — activate a model before recording.');
+  }, [canRecordConverted, discardRecording, recordBlockReason]);
 
   const stop = useCallback(() => {
     if (recordingRef.current) {
@@ -359,6 +403,13 @@ export default function useAudioPipeline(wsHook) {
 
   const startRecording = useCallback(() => {
     if (recordingRef.current) return;
+    if (!canRecordConverted) {
+      setRecordNotice({
+        tone: 'error',
+        message: recordBlockReason || 'No active voice model — activate a model before recording.',
+      });
+      return;
+    }
     recordChunksRef.current = [];
     recordSamplesRef.current = 0;
     recordLimitRef.current = maxRecordingSamples(sampleRateRef.current);
@@ -366,7 +417,7 @@ export default function useAudioPipeline(wsHook) {
     meters.set({ recordSeconds: 0 });
     setRecordNotice(null);
     setIsRecording(true);
-  }, [meters]);
+  }, [meters, canRecordConverted, recordBlockReason]);
 
   const stopRecording = useCallback(() => finalizeRecording(), [finalizeRecording]);
 
@@ -392,6 +443,10 @@ export default function useAudioPipeline(wsHook) {
     meters,
     getAnalysers,
     isRecording,
+    canRecordConverted,
+    recordBlockReason,
+    activeModel,
+    processingMode,
     library,
     recordNotice,
     startRecording,
@@ -401,7 +456,8 @@ export default function useAudioPipeline(wsHook) {
     streamInfo,
     playbackStats,
   }), [
-    start, stop, isRunning, meters, getAnalysers, isRecording, library, recordNotice,
+    start, stop, isRunning, meters, getAnalysers, isRecording, canRecordConverted,
+    recordBlockReason, activeModel, processingMode, library, recordNotice,
     startRecording, stopRecording, outputSelectionSupported, streamInfo, playbackStats,
   ]);
 }
