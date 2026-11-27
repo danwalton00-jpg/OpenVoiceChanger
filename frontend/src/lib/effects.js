@@ -101,7 +101,7 @@ export const EFFECT_DEFS = [
     label: 'Output Gain',
     tagline: 'Final output trim',
     params: [
-      { key: 'db', label: 'Gain', min: -24, max: 24, step: 0.5, default: 0, unit: 'dB' },
+      { key: 'db', label: 'Gain', min: -24, max: 24, step: 0.5, default: 9, unit: 'dB' },
     ],
   },
 ];
@@ -115,6 +115,8 @@ export function defaultEffects() {
     }
     effects[def.key] = entry;
   }
+  // Enable a moderate loudness boost by default for quiet mobile playback.
+  effects.gain.enabled = true;
   return effects;
 }
 
