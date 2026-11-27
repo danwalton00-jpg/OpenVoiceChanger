@@ -474,3 +474,20 @@ class TestConversionUploadResourceLimits:
         assert response.status_code == 400
         assert response.json()["detail"] == "Could not decode the uploaded audio file."
         assert "private filesystem path" not in response.text
+
+
+class TestModelActivationErrorDisclosure:
+    def test_activation_failure_does_not_expose_internal_details(self, client, monkeypatch):
+        manager = app.state.model_manager
+
+        def fail_activation(name):
+            raise RuntimeError("checkpoint failed at /srv/private/voice.pth")
+
+        monkeypatch.setattr(manager, "activate_model", fail_activation)
+        monkeypatch.setattr(app.state, "hosted_dsp_only", False)
+
+        response = client.post("/api/models/private-voice.pth/activate")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Model activation failed. Check the server logs for details."
+        assert "/srv/private" not in response.text
