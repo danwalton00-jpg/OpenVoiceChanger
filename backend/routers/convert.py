@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/convert", tags=["convert"])
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
+ACTIVE_MODEL_REQUIRED = "No active voice model — activate a model before recording."
+
+
+class ActiveModelRequiredError(RuntimeError):
+    """Raised when a model conversion is requested without an active model."""
 
 
 def _load_audio(data: bytes, filename: str) -> tuple[np.ndarray, int]:
@@ -69,8 +74,13 @@ def _render(
     chain = EffectsChain(sample_rate)
     processed = chain.pre_process(audio, effects)
 
-    model_applied = False
-    if use_model and model_manager.get_active_model() is not None:
+    if use_model:
+        # Never silently turn a requested model conversion into DSP pitch
+        # shifting. Recheck here because the model may be unloaded after the
+        # endpoint preflight and before this worker-thread render.
+        if model_manager.get_active_model() is None:
+            raise ActiveModelRequiredError(ACTIVE_MODEL_REQUIRED)
+
         try:
             processed = model_manager.process_audio(
                 processed,
@@ -90,11 +100,11 @@ def _render(
                     "use_stream_context": False,
                 },
             )
-            model_applied = True
         finally:
             model_manager.release_stream("__convert__")
-
-    if not model_applied and abs(pitch_shift) > 1e-3:
+    elif abs(pitch_shift) > 1e-3:
+        # DSP-only is an explicit opt-in (use_model=False), never a fallback
+        # when a requested RVC model is missing.
         processed = chain.apply_pitch(processed, pitch_shift)
 
     return chain.post_process(processed, effects, formant_shift)
@@ -121,6 +131,9 @@ async def convert_file(
     model_manager = getattr(request.app.state, "model_manager", None)
     if model_manager is None:
         raise HTTPException(status_code=503, detail="Model manager not initialized")
+
+    if use_model and model_manager.get_active_model() is None:
+        raise HTTPException(status_code=409, detail=ACTIVE_MODEL_REQUIRED)
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
@@ -170,6 +183,8 @@ async def convert_file(
             crepe_hop_length,
         )
         wav_bytes = await asyncio.to_thread(_encode_wav, rendered, sample_rate)
+    except ActiveModelRequiredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("File conversion failed")
         raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}")
