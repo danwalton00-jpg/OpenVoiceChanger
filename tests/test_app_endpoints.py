@@ -441,3 +441,35 @@ class TestModelUploadSafety:
 
         assert not (tmp_path / "too-large.onnx").exists()
         assert manager.list_models() == []
+
+
+class TestConversionUploadResourceLimits:
+    def test_upload_reads_only_one_byte_over_the_configured_limit(self, client, monkeypatch):
+        import backend.routers.convert as convert_module
+
+        monkeypatch.setattr(convert_module, "MAX_UPLOAD_BYTES", 16)
+        response = client.post(
+            "/api/convert/",
+            files={"file": ("large.wav", b"x" * 17, "audio/wav")},
+            data={"use_model": "false"},
+        )
+
+        assert response.status_code == 413
+        assert response.json()["detail"] == "File too large (max 200 MB)"
+
+    def test_conversion_errors_do_not_expose_internal_exception_text(self, client, monkeypatch):
+        import backend.routers.convert as convert_module
+
+        def fail_decode(data, filename):
+            raise ValueError("private filesystem path /srv/private/model.bin")
+
+        monkeypatch.setattr(convert_module, "_load_audio", fail_decode)
+        response = client.post(
+            "/api/convert/",
+            files={"file": ("tone.wav", b"not-a-real-wave", "audio/wav")},
+            data={"use_model": "false"},
+        )
+
+        # Decode validation errors remain a client error and do not leak paths.
+        assert response.status_code == 400
+        assert "private filesystem path" not in response.text
