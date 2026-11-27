@@ -77,7 +77,15 @@ function TakeRow({ take, library }) {
 }
 
 function Recorder({ pipeline }) {
-  const { isRunning, isRecording, library, recordNotice, meters } = pipeline;
+  const {
+    isRunning,
+    isRecording,
+    canRecordConverted,
+    recordBlockReason,
+    library,
+    recordNotice,
+    meters,
+  } = pipeline;
 
   return (
     <section className="panel p-5">
@@ -106,16 +114,30 @@ function Recorder({ pipeline }) {
         ) : (
           <button
             onClick={() => pipeline.startRecording()}
-            disabled={!isRunning}
+            disabled={!isRunning || !canRecordConverted}
             data-tone="danger"
             className="frost-control inline-flex h-9 items-center gap-2 px-4 text-xs font-semibold"
-            title={isRunning ? 'Record the converted output (shortcut: R)' : 'Start routing first'}
+            title={!isRunning ? 'Start routing first' : (recordBlockReason || 'Record model-converted output (shortcut: R)')}
           >
             <Circle className="h-3 w-3 fill-current" aria-hidden="true" />
             Record
           </button>
         )}
       </div>
+
+      {isRunning && !canRecordConverted && (
+        <div
+          role="alert"
+          className="mt-3 rounded-md border border-danger-line bg-danger-bg p-3"
+        >
+          <p className="text-xs text-danger-fg">
+            {recordBlockReason || 'No active voice model — activate a model before recording.'}
+          </p>
+          <p className="mt-1 text-xs text-fg-subtle">
+            Bypass and DSP-only processing remain available for live A/B monitoring, but are not saved as model-converted recordings.
+          </p>
+        </div>
+      )}
 
       {recordNotice && (
         <div
