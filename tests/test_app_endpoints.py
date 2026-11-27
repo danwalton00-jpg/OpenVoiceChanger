@@ -399,3 +399,45 @@ class TestWebSocketJsonMessageSizeLimit:
         _handle_json_message(oversized, state)
 
         assert state == {"bypass": False, "pitch_shift": 0.0}
+
+
+class TestModelUploadSafety:
+    def test_duplicate_upload_does_not_overwrite_existing_model(self, tmp_path):
+        import asyncio
+        import io
+        from starlette.datastructures import UploadFile
+        from backend.services.model_manager import ModelManager
+
+        manager = ModelManager(str(tmp_path))
+        original = b"existing-model-data"
+        asyncio.run(manager.upload_model(
+            "voice.onnx",
+            UploadFile(filename="voice.onnx", file=io.BytesIO(original)),
+        ))
+
+        with pytest.raises(ValueError, match="already exists"):
+            asyncio.run(manager.upload_model(
+                "voice.onnx",
+                UploadFile(filename="voice.onnx", file=io.BytesIO(b"replacement")),
+            ))
+
+        assert (tmp_path / "voice.onnx").read_bytes() == original
+        assert len(manager.list_models()) == 1
+
+    def test_oversized_upload_removes_only_its_partial_file(self, tmp_path, monkeypatch):
+        import asyncio
+        import io
+        from starlette.datastructures import UploadFile
+        import backend.services.model_manager as model_module
+
+        monkeypatch.setattr(model_module, "MAX_MODEL_SIZE", 3)
+        manager = model_module.ModelManager(str(tmp_path))
+
+        with pytest.raises(ValueError, match="maximum size"):
+            asyncio.run(manager.upload_model(
+                "too-large.onnx",
+                UploadFile(filename="too-large.onnx", file=io.BytesIO(b"1234")),
+            ))
+
+        assert not (tmp_path / "too-large.onnx").exists()
+        assert manager.list_models() == []

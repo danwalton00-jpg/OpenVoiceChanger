@@ -16,12 +16,28 @@ _DEFAULT_PORTS = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
 
 def _split_origin(origin: str) -> tuple[str, str, str] | None:
     """Split an origin into (scheme, host, port), or None if unparseable."""
-    parts = urlsplit(origin.strip().rstrip("/"))
-    if not parts.scheme or not parts.hostname:
+    try:
+        parts = urlsplit(origin.strip().rstrip("/"))
+        host = parts.hostname
+        port_value = parts.port
+    except ValueError:
+        # Invalid IPv6 literals and non-numeric/out-of-range ports are
+        # untrusted input, not exceptional conditions for the request handler.
+        return None
+    if (
+        not parts.scheme
+        or not host
+        or parts.scheme.lower() not in {"http", "https"}
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path
+        or parts.query
+        or parts.fragment
+    ):
         return None
     scheme = parts.scheme.lower()
-    port = str(parts.port) if parts.port else _DEFAULT_PORTS.get(scheme, "")
-    return scheme, parts.hostname.lower(), port
+    port = str(port_value) if port_value else _DEFAULT_PORTS.get(scheme, "")
+    return scheme, host.lower(), port
 
 
 def normalize_origin(origin: str) -> str | None:
@@ -39,10 +55,15 @@ def _authority(host_header: str) -> tuple[str, str] | None:
     if not host_header:
         return None
     # Reuse urlsplit so IPv6 literals like [::1]:8000 are handled correctly.
-    parts = urlsplit(f"//{host_header}")
-    if not parts.hostname:
+    try:
+        parts = urlsplit(f"//{host_header}")
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
         return None
-    return parts.hostname.lower(), str(parts.port) if parts.port else ""
+    if not host or parts.username is not None or parts.password is not None:
+        return None
+    return host.lower(), str(port) if port else ""
 
 
 def is_same_origin(origin: str, host_header: str | None) -> bool:

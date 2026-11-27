@@ -112,3 +112,24 @@ class TestSecureDefaults:
         from backend.config import settings
 
         assert settings.RVC_ALLOW_UNSAFE_CHECKPOINTS is False
+
+
+class TestMalformedOriginHandling:
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "https://example.com:bad",
+            "https://example.com:99999",
+            "https://[invalid-ipv6",
+            "https://user@example.com",
+            "https://example.com/path",
+            "ftp://example.com",
+        ],
+    )
+    def test_rejects_malformed_or_non_origin_urls(self, origin):
+        assert normalize_origin(origin) is None
+        assert not is_origin_allowed(origin, "example.com", LOCAL)
+
+    @pytest.mark.parametrize("host", ["example.com:bad", "[invalid-ipv6", "user@example.com"])
+    def test_malformed_host_header_is_rejected_without_raising(self, host):
+        assert not is_same_origin("https://example.com", host)
