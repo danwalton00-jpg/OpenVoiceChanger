@@ -23,7 +23,7 @@ function RecordTimer({ meters }) {
   return <span ref={ref}>0:00</span>;
 }
 
-// Records the converted output stream and offers a WAV download.
+// Records the live processed output stream and offers a WAV download.
 function TakeRow({ take, library }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(take.name);
@@ -98,7 +98,7 @@ function Recorder({ pipeline }) {
   const {
     isRunning,
     isRecording,
-    canRecordConverted,
+    canRecordOutput,
     recordBlockReason,
     library,
     recordNotice,
@@ -132,10 +132,10 @@ function Recorder({ pipeline }) {
         ) : (
           <button
             onClick={() => pipeline.startRecording()}
-            disabled={!isRunning || !canRecordConverted}
+            disabled={!isRunning || !canRecordOutput}
             data-tone="danger"
             className="frost-control inline-flex h-9 items-center gap-2 px-4 text-xs font-semibold"
-            title={!isRunning ? 'Start routing first' : (recordBlockReason || 'Record model-converted output (shortcut: R)')}
+            title={!isRunning ? 'Start routing first' : 'Record live processed output (shortcut: R)'}
           >
             <Circle className="h-3 w-3 fill-current" aria-hidden="true" />
             Record
@@ -143,18 +143,10 @@ function Recorder({ pipeline }) {
         )}
       </div>
 
-      {isRunning && !canRecordConverted && (
-        <div
-          role="alert"
-          className="mt-3 rounded-md border border-danger-line bg-danger-bg p-3"
-        >
-          <p className="text-xs text-danger-fg">
-            {recordBlockReason || 'No active voice model — activate a model before recording.'}
-          </p>
-          <p className="mt-1 text-xs text-fg-subtle">
-            Bypass and DSP-only processing remain available for live A/B monitoring, but are not saved as model-converted recordings.
-          </p>
-        </div>
+      {isRunning && (
+        <p className="mt-3 text-xs text-fg-subtle">
+          Recording saves the live output you hear, including DSP effects or AI conversion when active. It does not create or train an AI voice model.
+        </p>
       )}
 
       {recordNotice && (
@@ -211,7 +203,7 @@ function Recorder({ pipeline }) {
           <p className="mt-3 text-xs text-fg-faint">No voice sample selected yet.</p>
         )}
         <p className="mt-3 text-xs text-warn-fg">
-          The sample stays on this device and is only selected for preview. The free hosted version cannot yet turn a recording into an activated AI voice model.
+          The sample stays on this device and is only selected for preview. It is not uploaded or used to train an AI voice model.
         </p>
       </div>
 
