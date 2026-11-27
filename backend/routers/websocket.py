@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import time
+import threading
 from contextlib import nullcontext
 
 import numpy as np
@@ -23,6 +24,24 @@ router = APIRouter()
 STATUS_INTERVAL = 1.0
 MAX_CONCURRENT_AUDIO_CONNECTIONS = 2
 _active_audio_connections = 0
+_audio_connections_lock = threading.Lock()
+
+
+def _reserve_audio_connection_slot() -> bool:
+    """Atomically reserve one of the limited live audio connection slots."""
+    global _active_audio_connections
+    with _audio_connections_lock:
+        if _active_audio_connections >= MAX_CONCURRENT_AUDIO_CONNECTIONS:
+            return False
+        _active_audio_connections += 1
+        return True
+
+
+def _release_audio_connection_slot() -> None:
+    """Release a previously reserved live audio connection slot safely."""
+    global _active_audio_connections
+    with _audio_connections_lock:
+        _active_audio_connections = max(0, _active_audio_connections - 1)
 MIN_SAMPLE_RATE = 8000
 MAX_SAMPLE_RATE = 192000
 MIN_CHUNK_SIZE = 128
@@ -96,13 +115,17 @@ async def audio_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=1013, reason="Update in progress")
         return
 
-    global _active_audio_connections
-    if _active_audio_connections >= MAX_CONCURRENT_AUDIO_CONNECTIONS:
+    # Reserve before the first await so simultaneous handshakes cannot
+    # both observe the same free slot and exceed the configured limit.
+    if not _reserve_audio_connection_slot():
         await websocket.close(code=1013, reason="Free server is busy. Try again shortly.")
         return
 
-    await websocket.accept()
-    _active_audio_connections += 1
+    try:
+        await websocket.accept()
+    except Exception:
+        _release_audio_connection_slot()
+        raise
     client_id = id(websocket)
     logger.info("WebSocket connected: %s", client_id)
 
@@ -111,7 +134,7 @@ async def audio_websocket(websocket: WebSocket) -> None:
         # The connection counter is incremented immediately after accept();
         # release the slot here as this early exit happens before the main
         # try/finally cleanup block.
-        _active_audio_connections = max(0, _active_audio_connections - 1)
+        _release_audio_connection_slot()
         await websocket.close(code=1011, reason="Model manager not available")
         return
 
@@ -192,8 +215,13 @@ async def audio_websocket(websocket: WebSocket) -> None:
         except Exception:
             pass
     finally:
-        await asyncio.to_thread(model_manager.release_stream, conn_state["stream_id"])
-        _active_audio_connections = max(0, _active_audio_connections - 1)
+        try:
+            await asyncio.to_thread(model_manager.release_stream, conn_state["stream_id"])
+        except Exception:
+            logger.exception("Failed to release audio stream state: %s", client_id)
+        finally:
+            # Slot cleanup must happen even if model stream cleanup fails.
+            _release_audio_connection_slot()
 
 
 def _get_chain(conn_state: dict) -> EffectsChain:
