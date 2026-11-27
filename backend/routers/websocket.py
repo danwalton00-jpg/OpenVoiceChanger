@@ -32,6 +32,7 @@ MAX_SILENCE_THRESHOLD_DB = -20.0
 DEFAULT_SILENCE_THRESHOLD_DB = -52.0
 DEFAULT_SILENCE_SAVER = True
 SILENCE_HOLD_MS = 180.0
+MAX_JSON_MESSAGE_BYTES = 16 * 1024
 
 
 def _bounded_int(value, minimum: int, maximum: int) -> int | None:
@@ -214,6 +215,10 @@ async def _receive_config(websocket: WebSocket, conn_state: dict) -> dict | None
         await websocket.close(code=1008, reason="Config timeout")
         return None
     except Exception:
+        return None
+
+    if len(raw.encode("utf-8")) > MAX_JSON_MESSAGE_BYTES:
+        await websocket.close(code=1009, reason="WebSocket JSON message is too large")
         return None
 
     try:
@@ -479,6 +484,10 @@ async def _handle_binary_frame(
 
 def _handle_json_message(text: str, conn_state: dict) -> None:
     """Handle a JSON settings update from the client."""
+    if len(text.encode("utf-8")) > MAX_JSON_MESSAGE_BYTES:
+        logger.warning("Ignoring oversized WebSocket JSON settings message")
+        return
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError:

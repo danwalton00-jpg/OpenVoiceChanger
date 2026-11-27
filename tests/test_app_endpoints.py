@@ -377,3 +377,25 @@ class TestWebSocketSettingsValidation:
             "rms_mix_rate": 0.25,
             "protect": 0.3,
         }
+
+
+class TestWebSocketJsonMessageSizeLimit:
+    def test_oversized_initial_config_is_rejected(self, client):
+        from backend.routers.websocket import MAX_JSON_MESSAGE_BYTES
+
+        with client.websocket_connect("/ws/audio") as ws:
+            ws.send_text('{"padding":"' + ("x" * MAX_JSON_MESSAGE_BYTES) + '"}')
+            message = ws.receive()
+
+        assert message["type"] == "websocket.close"
+        assert message["code"] == 1009
+
+    def test_oversized_live_settings_are_ignored(self):
+        from backend.routers.websocket import MAX_JSON_MESSAGE_BYTES, _handle_json_message
+
+        state = {"bypass": False, "pitch_shift": 0.0}
+        oversized = '{"bypass":true,"padding":"' + ("x" * MAX_JSON_MESSAGE_BYTES) + '"}'
+
+        _handle_json_message(oversized, state)
+
+        assert state == {"bypass": False, "pitch_shift": 0.0}
