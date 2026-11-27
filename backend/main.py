@@ -139,11 +139,19 @@ async def lifespan(app: FastAPI):
             ", ".join(_cors_origins) or "none",
         )
     if settings.HOST not in {"127.0.0.1", "localhost", "::1"}:
-        logger.warning(
-            "Binding to %s exposes the studio beyond this machine — anyone who can "
-            "reach it can upload and activate models.",
-            settings.HOST,
-        )
+        if HOSTED_DSP_ONLY:
+            logger.warning(
+                "Binding to %s exposes the hosted DSP studio publicly — anyone who "
+                "can reach it may consume audio-processing resources. Model upload, "
+                "activation, and file conversion are disabled.",
+                settings.HOST,
+            )
+        else:
+            logger.warning(
+                "Binding to %s exposes the studio beyond this machine — anyone who "
+                "can reach it may upload and activate models.",
+                settings.HOST,
+            )
 
     logger.info("Backend ready — listening on %s:%d", settings.HOST, settings.PORT)
     try:
