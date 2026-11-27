@@ -657,6 +657,7 @@ export default function App() {
           activePresetId={activePresetId}
           onApplyPreset={applyPreset}
           getCurrentSettings={getCurrentSettings}
+          readOnly={hostedDspOnly}
         />
 
         <EffectsRack

@@ -40,7 +40,7 @@ function PresetChip({ preset, active, onApply, onDelete }) {
   );
 }
 
-function PresetBar({ activePresetId, onApplyPreset, getCurrentSettings, refreshRevision = 0 }) {
+function PresetBar({ activePresetId, onApplyPreset, getCurrentSettings, refreshRevision = 0, readOnly = false }) {
   const [presets, setPresets] = useState({ builtin: [], user: [] });
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
@@ -98,7 +98,7 @@ function PresetBar({ activePresetId, onApplyPreset, getCurrentSettings, refreshR
           <h2 className="panel-title">One-click voices</h2>
         </div>
 
-        <div className="flex items-center gap-2">
+        {!readOnly && <div className="flex items-center gap-2">
           {showSave ? (
             <div className="flex items-center gap-2">
               <input
@@ -133,9 +133,10 @@ function PresetBar({ activePresetId, onApplyPreset, getCurrentSettings, refreshR
               Save current
             </button>
           )}
-        </div>
+        </div>}
       </div>
 
+      {readOnly && <p className="mt-2 text-xs text-fg-subtle">Built-in presets are available. Saving and deleting shared presets is disabled on this public free server.</p>}
       {error && <p className="mt-2 text-xs text-danger-fg" role="alert">{error}</p>}
 
       <div className="mt-4 flex gap-2 overflow-x-auto pb-2 pt-2">
@@ -147,8 +148,8 @@ function PresetBar({ activePresetId, onApplyPreset, getCurrentSettings, refreshR
             onApply={onApplyPreset}
           />
         ))}
-        {presets.user.length > 0 && <div className="mx-1 w-px flex-shrink-0 self-stretch bg-line-strong" />}
-        {presets.user.map((preset) => (
+        {!readOnly && presets.user.length > 0 && <div className="mx-1 w-px flex-shrink-0 self-stretch bg-line-strong" />}
+        {!readOnly && presets.user.map((preset) => (
           <PresetChip
             key={preset.id}
             preset={preset}

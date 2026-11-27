@@ -7,6 +7,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/presets", tags=["presets"])
 
+HOSTED_PRESETS_READ_ONLY = (
+    "Shared presets are read-only on the free hosted service. "
+    "Use a local installation to save or delete personal presets."
+)
+
 
 class PresetPayload(BaseModel):
     name: str = Field(min_length=1, max_length=40)
@@ -31,6 +36,8 @@ async def list_presets(request: Request) -> dict:
 @router.post("/")
 async def save_preset(request: Request, payload: PresetPayload) -> dict:
     """Save (or overwrite) a user preset."""
+    if getattr(request.app.state, "hosted_dsp_only", False):
+        raise HTTPException(status_code=403, detail=HOSTED_PRESETS_READ_ONLY)
     store = _get_store(request)
     try:
         return store.save(payload.name, payload.settings, payload.emoji)
@@ -44,6 +51,8 @@ async def save_preset(request: Request, payload: PresetPayload) -> dict:
 @router.delete("/{preset_id}")
 async def delete_preset(request: Request, preset_id: str) -> dict:
     """Delete a user preset by id."""
+    if getattr(request.app.state, "hosted_dsp_only", False):
+        raise HTTPException(status_code=403, detail=HOSTED_PRESETS_READ_ONLY)
     store = _get_store(request)
     try:
         store.delete(preset_id)

@@ -58,6 +58,31 @@ class TestHealthAndConfig:
         assert -80 <= body["silence_threshold_db"] <= -20
         assert "runtime" in body
 
+    def test_hosted_dsp_mode_blocks_shared_preset_mutations(self, client, monkeypatch):
+        monkeypatch.setattr(app.state, "hosted_dsp_only", True)
+
+        saved = client.post(
+            "/api/presets/",
+            json={"name": "Visitor preset", "settings": {"pitch_shift": 2.0}},
+        )
+        deleted = client.delete("/api/presets/user-someone-elses-preset")
+
+        assert saved.status_code == 403
+        assert deleted.status_code == 403
+        assert "read-only" in saved.json()["detail"].lower()
+        assert "read-only" in deleted.json()["detail"].lower()
+
+    def test_local_mode_keeps_preset_mutations_available(self, client, monkeypatch):
+        monkeypatch.setattr(app.state, "hosted_dsp_only", False)
+
+        response = client.post(
+            "/api/presets/",
+            json={"name": "Local preset", "settings": {"pitch_shift": 2.0}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "Local preset"
+
 
 class TestCors:
     def test_allows_a_configured_origin(self, client):
