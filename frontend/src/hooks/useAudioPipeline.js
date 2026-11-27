@@ -27,10 +27,9 @@ export default function useAudioPipeline(wsHook) {
   // object would recreate start/stop every time a latency sample arrives.
   const { sendAudio, setOnAudioReceived, setStreamSampleRate, serverStats } = wsHook;
 
-  // A take is only labelled as a converted voice recording when the backend
-  // confirms that a real model is active and model inference is the live mode.
-  // DSP and bypass remain available for monitoring/A-B tests, but are never
-  // silently saved as model-converted audio.
+  // The recorder captures the actual playback stream returned by the live audio
+  // pipeline. That stream may be DSP-only, bypassed, or model-converted; the UI
+  // describes it as processed output rather than claiming every take is AI.
   const activeModel = serverStats?.activeModel ?? null;
   const processingMode = serverStats?.mode ?? 'dsp';
   const modelProcessingError = serverStats?.processingError ?? null;
@@ -170,13 +169,6 @@ export default function useAudioPipeline(wsHook) {
       message,
     });
   }, [meters]);
-
-  // If the model is removed, bypassed, or inference fails during a take, do
-  // not save a mixed/raw/DSP recording under the converted-recording label.
-  useEffect(() => {
-    if (!recordingRef.current || canRecordConverted) return;
-    discardRecording(recordBlockReason || 'No active voice model — activate a model before recording.');
-  }, [canRecordConverted, discardRecording, recordBlockReason]);
 
   const stop = useCallback(() => {
     if (recordingRef.current) {
@@ -414,14 +406,7 @@ export default function useAudioPipeline(wsHook) {
   );
 
   const startRecording = useCallback(() => {
-    if (recordingRef.current) return;
-    if (!canRecordConverted) {
-      setRecordNotice({
-        tone: 'error',
-        message: recordBlockReason || 'No active voice model — activate a model before recording.',
-      });
-      return;
-    }
+    if (recordingRef.current || !isRunning) return;
     recordChunksRef.current = [];
     recordSamplesRef.current = 0;
     recordLimitRef.current = maxRecordingSamples(sampleRateRef.current);
@@ -429,7 +414,7 @@ export default function useAudioPipeline(wsHook) {
     meters.set({ recordSeconds: 0 });
     setRecordNotice(null);
     setIsRecording(true);
-  }, [meters, canRecordConverted, recordBlockReason]);
+  }, [meters, isRunning]);
 
   const stopRecording = useCallback(() => finalizeRecording(), [finalizeRecording]);
 
@@ -456,7 +441,8 @@ export default function useAudioPipeline(wsHook) {
     getAnalysers,
     isRecording,
     canRecordConverted,
-    recordBlockReason,
+    canRecordOutput: isRunning,
+    recordBlockReason: isRunning ? null : 'Start audio routing before recording.',
     activeModel,
     processingMode,
     library,
