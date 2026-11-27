@@ -657,13 +657,23 @@ export default function App() {
       </div>
 
       <div {...panelProps('models')} className="mx-auto max-w-4xl animate-fade-in-up">
-        <ModelManager
-          activeModel={activeModel}
-          onActiveModelChange={setActiveModel}
-          active={tab === 'models'}
-        />
-        <RuntimeReadiness readiness={runtimeConfig.runtime?.rvc} checking={runtimeChecking}
-          error={runtimeError} onRefresh={refreshRuntime} setup={setupControls} />
+        {hostedDspOnly ? (
+          <section className="panel p-6">
+            <p className="panel-kicker">Model Bay</p>
+            <h2 className="panel-title">Voice models are unavailable here</h2>
+            <p className="mt-2 text-sm text-fg-subtle">This shared free server runs DSP effects only. Model upload and activation are disabled. A local installation with a compatible RVC model is required for AI voice conversion.</p>
+          </section>
+        ) : (
+          <>
+            <ModelManager
+              activeModel={activeModel}
+              onActiveModelChange={setActiveModel}
+              active={tab === 'models'}
+            />
+            <RuntimeReadiness readiness={runtimeConfig.runtime?.rvc} checking={runtimeChecking}
+              error={runtimeError} onRefresh={refreshRuntime} setup={setupControls} />
+          </>
+        )}
       </div>
 
       <div {...panelProps('converter')} className="mx-auto max-w-3xl animate-fade-in-up">
