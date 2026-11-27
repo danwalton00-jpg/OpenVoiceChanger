@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.pth
+*.pt
+*.onnx
+models
+data
+frontend/node_modules
+frontend/dist
+tests
+*.zip

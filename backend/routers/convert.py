@@ -128,6 +128,12 @@ async def convert_file(
     crepe_hop_length: int | None = Form(None),
 ) -> Response:
     """Convert an uploaded audio file and return the rendered WAV."""
+    if getattr(request.app.state, "hosted_dsp_only", False):
+        raise HTTPException(
+            status_code=503,
+            detail="File uploads are disabled on the free hosted DSP service. Use live browser audio effects instead.",
+        )
+
     model_manager = getattr(request.app.state, "model_manager", None)
     if model_manager is None:
         raise HTTPException(status_code=503, detail="Model manager not initialized")
@@ -138,7 +144,9 @@ async def convert_file(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    data = await file.read()
+    # Read at most one byte beyond the limit. Calling read() without a size
+    # would buffer an arbitrarily large multipart upload before rejecting it.
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 200 MB)")
     if not data:
@@ -153,8 +161,11 @@ async def convert_file(
 
     try:
         audio, sample_rate = await asyncio.to_thread(_load_audio, data, file.filename)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError:
+        # Decoder exceptions can include local paths and implementation
+        # details. Keep those in logs and return a stable client message.
+        logger.info("Rejected unsupported or invalid audio upload: %s", file.filename)
+        raise HTTPException(status_code=400, detail="Could not decode the uploaded audio file.")
 
     max_samples = settings.MAX_CONVERT_SECONDS * sample_rate
     if len(audio) > max_samples:
@@ -185,9 +196,14 @@ async def convert_file(
         wav_bytes = await asyncio.to_thread(_encode_wav, rendered, sample_rate)
     except ActiveModelRequiredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Exception as exc:
+    except Exception:
         logger.exception("File conversion failed")
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}")
+        # Keep internal paths, decoder details, and runtime errors in server
+        # logs rather than reflecting them to an unauthenticated API caller.
+        raise HTTPException(
+            status_code=500,
+            detail="Conversion failed. Check the server logs for details.",
+        )
 
     out_name = f"{Path(file.filename).stem}_converted.wav"
     # `inline`, not `attachment`: the studio reads this response with fetch()

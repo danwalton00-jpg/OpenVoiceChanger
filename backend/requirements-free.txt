@@ -1,0 +1,18 @@
+# Lightweight hosted runtime for the free DSP-only deployment.
+#
+# This intentionally excludes PyTorch, fairseq, librosa, faiss, torchcrepe,
+# pyworld, and RVC inference extras. The app starts in model-free DSP mode.
+# ONNX Runtime is retained so an ONNX model can be used only if the host has
+# enough memory; this free service does not promise realtime model inference.
+#
+# Full local RVC installation remains documented in requirements.txt.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.18
+websockets>=14.0
+numpy>=1.26.0,<2.0
+scipy>=1.14.0
+onnxruntime==1.23.2
+pydantic-settings>=2.6.0
+soundfile>=0.12.1,<0.13.0

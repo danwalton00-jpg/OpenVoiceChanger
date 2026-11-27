@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Circle, Download, Square, Trash2, Check, Pencil, RefreshCw, X } from 'lucide-react';
+import { Circle, Download, Square, Trash2, Check, Pencil, RefreshCw, X, Upload } from 'lucide-react';
 import { formatBytes, formatDuration } from '../lib/format';
 
 // The elapsed counter ticks at animation rate. It subscribes to the pipeline's
@@ -23,7 +23,7 @@ function RecordTimer({ meters }) {
   return <span ref={ref}>0:00</span>;
 }
 
-// Records the converted output stream and offers a WAV download.
+// Records the live processed output stream and offers a WAV download.
 function TakeRow({ take, library }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(take.name);
@@ -77,11 +77,28 @@ function TakeRow({ take, library }) {
 }
 
 function Recorder({ pipeline }) {
+  const [selectedVoiceSample, setSelectedVoiceSample] = useState(null);
+  const voiceSampleInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!selectedVoiceSample?.url) return undefined;
+    return () => URL.revokeObjectURL(selectedVoiceSample.url);
+  }, [selectedVoiceSample]);
+
+  const handleVoiceSampleSelect = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('audio/') && !/\.(wav|mp3|m4a|aac|ogg|webm)$/i.test(file.name)) {
+      return;
+    }
+    setSelectedVoiceSample({ file, url: URL.createObjectURL(file) });
+  };
+
   const {
     isRunning,
     isRecording,
-    canRecordConverted,
-    recordBlockReason,
+    canRecordOutput,
     library,
     recordNotice,
     meters,
@@ -114,10 +131,10 @@ function Recorder({ pipeline }) {
         ) : (
           <button
             onClick={() => pipeline.startRecording()}
-            disabled={!isRunning || !canRecordConverted}
+            disabled={!isRunning || !canRecordOutput}
             data-tone="danger"
             className="frost-control inline-flex h-9 items-center gap-2 px-4 text-xs font-semibold"
-            title={!isRunning ? 'Start routing first' : (recordBlockReason || 'Record model-converted output (shortcut: R)')}
+            title={!isRunning ? 'Start routing first' : 'Record live processed output (shortcut: R)'}
           >
             <Circle className="h-3 w-3 fill-current" aria-hidden="true" />
             Record
@@ -125,18 +142,10 @@ function Recorder({ pipeline }) {
         )}
       </div>
 
-      {isRunning && !canRecordConverted && (
-        <div
-          role="alert"
-          className="mt-3 rounded-md border border-danger-line bg-danger-bg p-3"
-        >
-          <p className="text-xs text-danger-fg">
-            {recordBlockReason || 'No active voice model — activate a model before recording.'}
-          </p>
-          <p className="mt-1 text-xs text-fg-subtle">
-            Bypass and DSP-only processing remain available for live A/B monitoring, but are not saved as model-converted recordings.
-          </p>
-        </div>
+      {isRunning && (
+        <p className="mt-3 text-xs text-fg-subtle">
+          Recording saves the live output you hear, including DSP effects or AI conversion when active. It does not create or train an AI voice model.
+        </p>
       )}
 
       {recordNotice && (
@@ -153,6 +162,49 @@ function Recorder({ pipeline }) {
           </p>
         </div>
       )}
+
+      <div className="mt-4 rounded-lg border border-line bg-raised p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-fg">My recorded voice</p>
+            <p className="mt-1 text-xs text-fg-subtle">Choose an audio sample from your iPhone or Files app and preview it here.</p>
+          </div>
+          <button
+            type="button"
+            className="chip-button inline-flex items-center gap-2"
+            onClick={() => voiceSampleInputRef.current?.click()}
+          >
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            Choose recording
+          </button>
+          <input
+            ref={voiceSampleInputRef}
+            type="file"
+            accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.webm"
+            onChange={handleVoiceSampleSelect}
+            className="hidden"
+            aria-label="Choose a voice recording"
+          />
+        </div>
+        {selectedVoiceSample ? (
+          <div className="mt-3 min-w-0">
+            <p className="break-all text-xs font-medium text-fg-secondary">{selectedVoiceSample.file.name}</p>
+            <audio controls preload="metadata" src={selectedVoiceSample.url} className="mt-2 h-10 w-full" />
+            <button
+              type="button"
+              className="mt-2 text-xs text-fg-muted underline underline-offset-2"
+              onClick={() => setSelectedVoiceSample(null)}
+            >
+              Clear selected recording
+            </button>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-fg-faint">No voice sample selected yet.</p>
+        )}
+        <p className="mt-3 text-xs text-warn-fg">
+          The sample stays on this device and is only selected for preview. It is not uploaded or used to train an AI voice model.
+        </p>
+      </div>
 
       {library.error && <p role="alert" className="mt-3 text-xs text-warn-fg">{library.error}</p>}
       <div className="mt-4 border-t border-line pt-3">

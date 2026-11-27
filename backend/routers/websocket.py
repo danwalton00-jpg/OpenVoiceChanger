@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import time
+import threading
 from contextlib import nullcontext
 
 import numpy as np
@@ -21,6 +22,26 @@ router = APIRouter()
 
 # How often to send latency status messages (seconds)
 STATUS_INTERVAL = 1.0
+MAX_CONCURRENT_AUDIO_CONNECTIONS = 2
+_active_audio_connections = 0
+_audio_connections_lock = threading.Lock()
+
+
+def _reserve_audio_connection_slot() -> bool:
+    """Atomically reserve one of the limited live audio connection slots."""
+    global _active_audio_connections
+    with _audio_connections_lock:
+        if _active_audio_connections >= MAX_CONCURRENT_AUDIO_CONNECTIONS:
+            return False
+        _active_audio_connections += 1
+        return True
+
+
+def _release_audio_connection_slot() -> None:
+    """Release a previously reserved live audio connection slot safely."""
+    global _active_audio_connections
+    with _audio_connections_lock:
+        _active_audio_connections = max(0, _active_audio_connections - 1)
 MIN_SAMPLE_RATE = 8000
 MAX_SAMPLE_RATE = 192000
 MIN_CHUNK_SIZE = 128
@@ -30,6 +51,7 @@ MAX_SILENCE_THRESHOLD_DB = -20.0
 DEFAULT_SILENCE_THRESHOLD_DB = -52.0
 DEFAULT_SILENCE_SAVER = True
 SILENCE_HOLD_MS = 180.0
+MAX_JSON_MESSAGE_BYTES = 16 * 1024
 
 
 def _bounded_int(value, minimum: int, maximum: int) -> int | None:
@@ -93,12 +115,26 @@ async def audio_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=1013, reason="Update in progress")
         return
 
-    await websocket.accept()
+    # Reserve before the first await so simultaneous handshakes cannot
+    # both observe the same free slot and exceed the configured limit.
+    if not _reserve_audio_connection_slot():
+        await websocket.close(code=1013, reason="Free server is busy. Try again shortly.")
+        return
+
+    try:
+        await websocket.accept()
+    except Exception:
+        _release_audio_connection_slot()
+        raise
     client_id = id(websocket)
     logger.info("WebSocket connected: %s", client_id)
 
     model_manager = getattr(websocket.app.state, "model_manager", None)
     if model_manager is None:
+        # The connection counter is incremented immediately after accept();
+        # release the slot here as this early exit happens before the main
+        # try/finally cleanup block.
+        _release_audio_connection_slot()
         await websocket.close(code=1011, reason="Model manager not available")
         return
 
@@ -179,7 +215,13 @@ async def audio_websocket(websocket: WebSocket) -> None:
         except Exception:
             pass
     finally:
-        await asyncio.to_thread(model_manager.release_stream, conn_state["stream_id"])
+        try:
+            await asyncio.to_thread(model_manager.release_stream, conn_state["stream_id"])
+        except Exception:
+            logger.exception("Failed to release audio stream state: %s", client_id)
+        finally:
+            # Slot cleanup must happen even if model stream cleanup fails.
+            _release_audio_connection_slot()
 
 
 def _get_chain(conn_state: dict) -> EffectsChain:
@@ -201,6 +243,10 @@ async def _receive_config(websocket: WebSocket, conn_state: dict) -> dict | None
         await websocket.close(code=1008, reason="Config timeout")
         return None
     except Exception:
+        return None
+
+    if len(raw.encode("utf-8")) > MAX_JSON_MESSAGE_BYTES:
+        await websocket.close(code=1009, reason="WebSocket JSON message is too large")
         return None
 
     try:
@@ -244,26 +290,43 @@ async def _receive_config(websocket: WebSocket, conn_state: dict) -> dict | None
 def _apply_settings(data: dict, conn_state: dict) -> None:
     """Merge a settings payload (config or live update) into connection state."""
     try:
-        if "pitch_shift" in data:
-            conn_state["pitch_shift"] = float(data["pitch_shift"])
-        if "formant_shift" in data:
-            conn_state["formant_shift"] = float(data["formant_shift"])
-        if "f0_method" in data:
-            conn_state["f0_method"] = str(data["f0_method"])
-        if "index_rate" in data and data["index_rate"] is not None:
-            conn_state["index_rate"] = float(data["index_rate"])
+        # Reject NaN and infinity: they can poison the audio pipeline and
+        # produce silent/invalid output even though float() accepts them.
+        # Keep each control inside the range understood by the DSP/RVC pipeline.
+        # In particular, the RVC blend controls are ratios, not arbitrary floats.
+        setting_ranges = {
+            "pitch_shift": (-24.0, 24.0),
+            "formant_shift": (-24.0, 24.0),
+            "index_rate": (0.0, 1.0),
+            "rms_mix_rate": (0.0, 1.0),
+            "protect": (0.0, 1.0),
+        }
+        for key, (minimum, maximum) in setting_ranges.items():
+            if key not in data or data[key] is None:
+                continue
+            value = _bounded_float(data[key], minimum, maximum)
+            if value is None:
+                logger.warning("Ignoring out-of-range %s value %r", key, data[key])
+                continue
+            conn_state[key] = value
+        if "f0_method" in data and isinstance(data["f0_method"], str):
+            conn_state["f0_method"] = data["f0_method"]
         if "filter_radius" in data and data["filter_radius"] is not None:
-            conn_state["filter_radius"] = int(data["filter_radius"])
-        if "rms_mix_rate" in data and data["rms_mix_rate"] is not None:
-            conn_state["rms_mix_rate"] = float(data["rms_mix_rate"])
-        if "protect" in data and data["protect"] is not None:
-            conn_state["protect"] = float(data["protect"])
+            radius = _bounded_int(data["filter_radius"], 0, 16)
+            if radius is not None:
+                conn_state["filter_radius"] = radius
         if "crepe_hop_length" in data and data["crepe_hop_length"] is not None:
-            conn_state["crepe_hop_length"] = int(np.clip(int(data["crepe_hop_length"]), 64, 512))
+            hop = _bounded_int(data["crepe_hop_length"], 64, 512)
+            if hop is not None:
+                conn_state["crepe_hop_length"] = hop
         if "effects" in data and isinstance(data["effects"], dict):
             conn_state["effects"] = data["effects"]
         if "bypass" in data:
-            conn_state["bypass"] = bool(data["bypass"])
+            bypass = _optional_bool(data["bypass"])
+            if bypass is None:
+                logger.warning("Ignoring invalid bypass value %r", data["bypass"])
+            else:
+                conn_state["bypass"] = bypass
     except (TypeError, ValueError) as exc:
         logger.warning("Ignoring invalid settings values: %s", exc)
 
@@ -421,6 +484,11 @@ async def _handle_binary_frame(
         logger.warning("Invalid audio frame: %s", exc)
         return
 
+    # Reject oversized payloads before allocating DSP work for them.
+    if len(audio) > int(conn_state["chunk_size"]):
+        await websocket.close(code=1009, reason="Audio frame exceeds negotiated chunk size")
+        return
+
     _get_chain(conn_state)
     processed, mode, model_ms, dsp_ms = await asyncio.to_thread(
         _process_frame_sync, audio, model_manager, conn_state
@@ -444,6 +512,10 @@ async def _handle_binary_frame(
 
 def _handle_json_message(text: str, conn_state: dict) -> None:
     """Handle a JSON settings update from the client."""
+    if len(text.encode("utf-8")) > MAX_JSON_MESSAGE_BYTES:
+        logger.warning("Ignoring oversized WebSocket JSON settings message")
+        return
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError:

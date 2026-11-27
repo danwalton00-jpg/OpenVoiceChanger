@@ -117,22 +117,29 @@ class ModelManager:
 
         dest = self._models_dir / safe_name
 
-        # Stream to disk in chunks to handle large files
+        # Exclusive creation prevents a duplicate upload from silently
+        # replacing a model (including one currently active in memory).
+        # Stream in bounded chunks and remove only the partial file created by
+        # this request if the upload fails.
         chunk_size = 1024 * 1024  # 1 MB
         total_written = 0
-        with open(dest, "wb") as f:
-            while True:
-                chunk = await file.read(chunk_size)
-                if not chunk:
-                    break
-                total_written += len(chunk)
-                if total_written > MAX_MODEL_SIZE:
-                    f.close()
-                    dest.unlink(missing_ok=True)
-                    raise ValueError(
-                        f"File exceeds maximum size ({MAX_MODEL_SIZE // (1024**3)} GB)"
-                    )
-                f.write(chunk)
+        try:
+            with open(dest, "xb") as output:
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    total_written += len(chunk)
+                    if total_written > MAX_MODEL_SIZE:
+                        raise ValueError(
+                            f"File exceeds maximum size ({MAX_MODEL_SIZE // (1024**3)} GB)"
+                        )
+                    output.write(chunk)
+        except FileExistsError as exc:
+            raise ValueError(f"A file named '{safe_name}' already exists") from exc
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
 
         if ext in COMPANION_EXTENSIONS:
             logger.info("Uploaded companion file: %s (%d bytes)", safe_name, total_written)

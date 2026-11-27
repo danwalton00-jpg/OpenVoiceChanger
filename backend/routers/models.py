@@ -7,12 +7,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
-# Activating a model runs torch.load, loads HuBERT and does a warm-up
-# inference — seconds to a minute of pure CPU work. Calling that directly from
-# an async handler stalls the whole event loop, which freezes the live audio
-# WebSocket and every other request until it finishes. These operations run in
-# a worker thread instead; ModelManager already serialises them with its own
-# lock, so concurrent requests queue there exactly as before.
+HOSTED_MODE_MESSAGE = (
+    "Model uploads and activation are disabled on the free hosted DSP service. "
+    "Use a local installation with your own trusted model files."
+)
+
+
+def _require_model_management(request: Request) -> None:
+    """Keep untrusted public users from writing checkpoints to hosted storage."""
+    if request.app.state.hosted_dsp_only:
+        raise HTTPException(status_code=403, detail=HOSTED_MODE_MESSAGE)
 
 
 def _get_manager(request: Request):
@@ -33,6 +37,7 @@ async def list_models(request: Request) -> list[dict]:
 @router.post("/upload")
 async def upload_model(request: Request, file: UploadFile) -> dict:
     """Upload a new model file (.onnx or .pth)."""
+    _require_model_management(request)
     manager = _get_manager(request)
 
     if not file.filename:
@@ -42,8 +47,8 @@ async def upload_model(request: Request, file: UploadFile) -> dict:
         meta = await manager.upload_model(file.filename, file)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        logger.error("Upload failed: %s", exc)
+    except Exception:
+        logger.exception("Upload failed")
         raise HTTPException(status_code=500, detail="Upload failed")
 
     return meta
@@ -52,14 +57,15 @@ async def upload_model(request: Request, file: UploadFile) -> dict:
 @router.delete("/{name}")
 async def delete_model(request: Request, name: str) -> dict:
     """Delete a model by name."""
+    _require_model_management(request)
     manager = _get_manager(request)
 
     try:
         await asyncio.to_thread(manager.delete_model, name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Model not found: {name}")
-    except Exception as exc:
-        logger.error("Delete failed: %s", exc)
+    except Exception:
+        logger.exception("Delete failed")
         raise HTTPException(status_code=500, detail="Delete failed")
 
     return {"status": "deleted", "name": name}
@@ -68,14 +74,21 @@ async def delete_model(request: Request, name: str) -> dict:
 @router.post("/{name}/activate")
 async def activate_model(request: Request, name: str) -> dict:
     """Activate a model for voice conversion."""
+    _require_model_management(request)
     manager = _get_manager(request)
 
     try:
         result = await asyncio.to_thread(manager.activate_model, name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Model not found: {name}")
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except RuntimeError:
+        # Model loader errors may include local filesystem paths, runtime
+        # details, or checkpoint internals. Keep diagnostics in server logs.
+        logger.exception("Model activation failed for %s", name)
+        raise HTTPException(
+            status_code=500,
+            detail="Model activation failed. Check the server logs for details.",
+        )
 
     return result
 
@@ -83,6 +96,7 @@ async def activate_model(request: Request, name: str) -> dict:
 @router.post("/deactivate")
 async def deactivate_model(request: Request) -> dict:
     """Deactivate the currently active model."""
+    _require_model_management(request)
     manager = _get_manager(request)
     await asyncio.to_thread(manager.deactivate_model)
     return {"status": "deactivated"}

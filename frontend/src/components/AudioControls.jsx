@@ -30,7 +30,9 @@ function AudioControls({
     setStarting(true);
     onStartingChange?.(true);
     try {
-      await devices.refresh?.();
+      // Start Web Audio directly in the tap handler. On iOS Safari, awaiting
+      // device enumeration first can consume the user-activation window needed
+      // to unlock audio playback.
       await pipeline.start(selectedInput || undefined, selectedOutput || undefined);
     } catch (err) {
       setError(err.message || 'Failed to start audio pipeline');

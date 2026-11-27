@@ -301,3 +301,9 @@ export async function convertFile(file, {
 export function isAbortError(err) {
   return err?.name === 'AbortError';
 }
+
+
+// Local-only status check. This endpoint never contacts ElevenLabs.
+export function fetchElevenLabsStatus(options = {}) {
+  return request('/elevenlabs/status', { ...options, timeoutMs: 10000 });
+}

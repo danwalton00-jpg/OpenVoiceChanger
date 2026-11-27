@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
-from backend.routers import convert, github_star, models, presets, runtime_setup, updates, websocket
+from backend.routers import convert, elevenlabs, github_star, models, presets, runtime_setup, updates, websocket
 from backend.security import cors_origins
 from backend.services.model_manager import ModelManager
 from backend.services.preset_store import PresetStore
@@ -120,6 +120,7 @@ async def lifespan(app: FastAPI):
     logger.info("ONNX Runtime: %s", "available" if _onnx_available else "NOT AVAILABLE — .onnx models won't work")
     logger.info("PyTorch: %s", "available" if _torch_available else "NOT AVAILABLE — .pth/RVC models won't work")
 
+    app.state.hosted_dsp_only = HOSTED_DSP_ONLY
     manager = ModelManager(settings.MODELS_DIR)
     app.state.model_manager = manager
     app.state.preset_store = PresetStore(settings.PRESETS_PATH)
@@ -138,11 +139,19 @@ async def lifespan(app: FastAPI):
             ", ".join(_cors_origins) or "none",
         )
     if settings.HOST not in {"127.0.0.1", "localhost", "::1"}:
-        logger.warning(
-            "Binding to %s exposes the studio beyond this machine — anyone who can "
-            "reach it can upload and activate models.",
-            settings.HOST,
-        )
+        if HOSTED_DSP_ONLY:
+            logger.warning(
+                "Binding to %s exposes the hosted DSP studio publicly — anyone who "
+                "can reach it may consume audio-processing resources. Model upload, "
+                "activation, and file conversion are disabled.",
+                settings.HOST,
+            )
+        else:
+            logger.warning(
+                "Binding to %s exposes the studio beyond this machine — anyone who "
+                "can reach it may upload and activate models.",
+                settings.HOST,
+            )
 
     logger.info("Backend ready — listening on %s:%d", settings.HOST, settings.PORT)
     try:
@@ -153,6 +162,8 @@ async def lifespan(app: FastAPI):
         manager.deactivate_model()
         logger.info("Shutdown complete")
 
+
+HOSTED_DSP_ONLY = os.environ.get("OVC_HOSTED_DSP_ONLY", "false").strip().lower() in {"1", "true", "yes"}
 
 app = FastAPI(
     title="OpenVoiceChanger",
@@ -184,6 +195,8 @@ async def health_check():
 async def get_config():
     return {
         "version": app.version,
+        "hosted_dsp_only": HOSTED_DSP_ONLY,
+        "hosting_notice": "Free hosted mode: DSP effects only. RVC model upload and activation are disabled." if HOSTED_DSP_ONLY else None,
         "update_instance": app.state.updates.instance,
         "runtime_setup_job": os.environ.get("OVC_RVC_SETUP_JOB"),
         "sample_rate": settings.SAMPLE_RATE,
@@ -203,6 +216,7 @@ async def get_config():
 
 # Include API routers
 app.include_router(models.router)
+app.include_router(elevenlabs.router)
 app.include_router(presets.router)
 app.include_router(convert.router)
 app.include_router(github_star.router)

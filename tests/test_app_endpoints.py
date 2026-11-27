@@ -58,6 +58,31 @@ class TestHealthAndConfig:
         assert -80 <= body["silence_threshold_db"] <= -20
         assert "runtime" in body
 
+    def test_hosted_dsp_mode_blocks_shared_preset_mutations(self, client, monkeypatch):
+        monkeypatch.setattr(app.state, "hosted_dsp_only", True)
+
+        saved = client.post(
+            "/api/presets/",
+            json={"name": "Visitor preset", "settings": {"pitch_shift": 2.0}},
+        )
+        deleted = client.delete("/api/presets/user-someone-elses-preset")
+
+        assert saved.status_code == 403
+        assert deleted.status_code == 403
+        assert "read-only" in saved.json()["detail"].lower()
+        assert "read-only" in deleted.json()["detail"].lower()
+
+    def test_local_mode_keeps_preset_mutations_available(self, client, monkeypatch):
+        monkeypatch.setattr(app.state, "hosted_dsp_only", False)
+
+        response = client.post(
+            "/api/presets/",
+            json={"name": "Local preset", "settings": {"pitch_shift": 2.0}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "Local preset"
+
 
 class TestCors:
     def test_allows_a_configured_origin(self, client):
@@ -281,3 +306,235 @@ class TestConvertDefaults:
 
         source = inspect.getsource(ModelManager.process_audio)
         assert 'settings.get("f0_method", DEFAULT_F0_METHOD)' in source
+
+
+
+class TestWebSocketSettingsValidation:
+    def test_non_finite_audio_settings_are_ignored(self):
+        from backend.routers.websocket import _apply_settings
+
+        state = {
+            "pitch_shift": 2.0,
+            "formant_shift": 1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+        _apply_settings(
+            {
+                "pitch_shift": float("nan"),
+                "formant_shift": float("inf"),
+                "index_rate": float("-inf"),
+                "rms_mix_rate": float("nan"),
+                "protect": float("inf"),
+            },
+            state,
+        )
+
+        assert state == {
+            "pitch_shift": 2.0,
+            "formant_shift": 1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+
+    def test_bypass_requires_a_boolean_value(self):
+        from backend.routers.websocket import _apply_settings
+
+        state = {"bypass": False}
+        _apply_settings({"bypass": "false"}, state)
+        assert state["bypass"] is False
+
+        _apply_settings({"bypass": True}, state)
+        assert state["bypass"] is True
+
+    def test_audio_settings_must_stay_within_supported_ranges(self):
+        from backend.routers.websocket import _apply_settings
+
+        state = {
+            "pitch_shift": 2.0,
+            "formant_shift": -1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+        _apply_settings(
+            {
+                "pitch_shift": 25.0,
+                "formant_shift": -25.0,
+                "index_rate": 1.1,
+                "rms_mix_rate": -0.1,
+                "protect": 2.0,
+            },
+            state,
+        )
+
+        assert state == {
+            "pitch_shift": 2.0,
+            "formant_shift": -1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+
+
+class TestWebSocketJsonMessageSizeLimit:
+    def test_oversized_initial_config_is_rejected(self, client):
+        from backend.routers.websocket import MAX_JSON_MESSAGE_BYTES
+
+        with client.websocket_connect("/ws/audio") as ws:
+            ws.send_text('{"padding":"' + ("x" * MAX_JSON_MESSAGE_BYTES) + '"}')
+            message = ws.receive()
+
+        assert message["type"] == "websocket.close"
+        assert message["code"] == 1009
+
+    def test_oversized_live_settings_are_ignored(self):
+        from backend.routers.websocket import MAX_JSON_MESSAGE_BYTES, _handle_json_message
+
+        state = {"bypass": False, "pitch_shift": 0.0}
+        oversized = '{"bypass":true,"padding":"' + ("x" * MAX_JSON_MESSAGE_BYTES) + '"}'
+
+        _handle_json_message(oversized, state)
+
+        assert state == {"bypass": False, "pitch_shift": 0.0}
+
+
+class TestModelUploadSafety:
+    def test_duplicate_upload_does_not_overwrite_existing_model(self, tmp_path):
+        import asyncio
+        import io
+        from starlette.datastructures import UploadFile
+        from backend.services.model_manager import ModelManager
+
+        manager = ModelManager(str(tmp_path))
+        original = b"existing-model-data"
+        asyncio.run(manager.upload_model(
+            "voice.onnx",
+            UploadFile(filename="voice.onnx", file=io.BytesIO(original)),
+        ))
+
+        with pytest.raises(ValueError, match="already exists"):
+            asyncio.run(manager.upload_model(
+                "voice.onnx",
+                UploadFile(filename="voice.onnx", file=io.BytesIO(b"replacement")),
+            ))
+
+        assert (tmp_path / "voice.onnx").read_bytes() == original
+        assert len(manager.list_models()) == 1
+
+    def test_oversized_upload_removes_only_its_partial_file(self, tmp_path, monkeypatch):
+        import asyncio
+        import io
+        from starlette.datastructures import UploadFile
+        import backend.services.model_manager as model_module
+
+        monkeypatch.setattr(model_module, "MAX_MODEL_SIZE", 3)
+        manager = model_module.ModelManager(str(tmp_path))
+
+        with pytest.raises(ValueError, match="maximum size"):
+            asyncio.run(manager.upload_model(
+                "too-large.onnx",
+                UploadFile(filename="too-large.onnx", file=io.BytesIO(b"1234")),
+            ))
+
+        assert not (tmp_path / "too-large.onnx").exists()
+        assert manager.list_models() == []
+
+
+class TestConversionUploadResourceLimits:
+    def test_upload_reads_only_one_byte_over_the_configured_limit(self, client, monkeypatch):
+        import backend.routers.convert as convert_module
+
+        monkeypatch.setattr(convert_module, "MAX_UPLOAD_BYTES", 16)
+        response = client.post(
+            "/api/convert/",
+            files={"file": ("large.wav", b"x" * 17, "audio/wav")},
+            data={"use_model": "false"},
+        )
+
+        assert response.status_code == 413
+        assert response.json()["detail"] == "File too large (max 200 MB)"
+
+    def test_conversion_errors_do_not_expose_internal_exception_text(self, client, monkeypatch):
+        import backend.routers.convert as convert_module
+
+        def fail_decode(data, filename):
+            raise ValueError("private filesystem path /srv/private/model.bin")
+
+        monkeypatch.setattr(convert_module, "_load_audio", fail_decode)
+        response = client.post(
+            "/api/convert/",
+            files={"file": ("tone.wav", b"not-a-real-wave", "audio/wav")},
+            data={"use_model": "false"},
+        )
+
+        # Decode validation errors remain a client error and do not leak paths.
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Could not decode the uploaded audio file."
+        assert "private filesystem path" not in response.text
+
+
+class TestModelActivationErrorDisclosure:
+    def test_activation_failure_does_not_expose_internal_details(self, client, monkeypatch):
+        manager = app.state.model_manager
+
+        def fail_activation(name):
+            raise RuntimeError("checkpoint failed at /srv/private/voice.pth")
+
+        monkeypatch.setattr(manager, "activate_model", fail_activation)
+        monkeypatch.setattr(app.state, "hosted_dsp_only", False)
+
+        response = client.post("/api/models/private-voice.pth/activate")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Model activation failed. Check the server logs for details."
+        assert "/srv/private" not in response.text
+
+
+
+class TestWebSocketConnectionSlotAccounting:
+    def test_concurrent_reservations_never_exceed_the_limit(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from backend.routers import websocket as ws_module
+
+        # Start from a known state; the test exercises the same lock used by
+        # live handshakes and does not open real network connections.
+        with ws_module._audio_connections_lock:
+            original = ws_module._active_audio_connections
+            ws_module._active_audio_connections = 0
+
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                reserved = list(pool.map(
+                    lambda _index: ws_module._reserve_audio_connection_slot(),
+                    range(20),
+                ))
+
+            assert sum(reserved) == ws_module.MAX_CONCURRENT_AUDIO_CONNECTIONS
+            with ws_module._audio_connections_lock:
+                assert ws_module._active_audio_connections == ws_module.MAX_CONCURRENT_AUDIO_CONNECTIONS
+
+            for _ in range(sum(reserved)):
+                ws_module._release_audio_connection_slot()
+
+            with ws_module._audio_connections_lock:
+                assert ws_module._active_audio_connections == 0
+        finally:
+            with ws_module._audio_connections_lock:
+                ws_module._active_audio_connections = original
+
+    def test_release_never_makes_connection_count_negative(self):
+        from backend.routers import websocket as ws_module
+
+        with ws_module._audio_connections_lock:
+            original = ws_module._active_audio_connections
+            ws_module._active_audio_connections = 0
+        try:
+            ws_module._release_audio_connection_slot()
+            with ws_module._audio_connections_lock:
+                assert ws_module._active_audio_connections == 0
+        finally:
+            with ws_module._audio_connections_lock:
+                ws_module._active_audio_connections = original
