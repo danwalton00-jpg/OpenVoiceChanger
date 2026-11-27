@@ -158,18 +158,6 @@ export default function useAudioPipeline(wsHook) {
     return recording;
   }, [meters, addTake]);
 
-  const discardRecording = useCallback((message) => {
-    recordingRef.current = false;
-    recordChunksRef.current = [];
-    recordSamplesRef.current = 0;
-    meters.set({ recordSeconds: 0 });
-    setIsRecording(false);
-    setRecordNotice({
-      tone: 'error',
-      message,
-    });
-  }, [meters]);
-
   const stop = useCallback(() => {
     if (recordingRef.current) {
       finalizeRecording();
