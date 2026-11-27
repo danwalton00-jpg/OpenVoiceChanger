@@ -259,12 +259,21 @@ def _apply_settings(data: dict, conn_state: dict) -> None:
     try:
         # Reject NaN and infinity: they can poison the audio pipeline and
         # produce silent/invalid output even though float() accepts them.
-        for key in ("pitch_shift", "formant_shift", "index_rate", "rms_mix_rate", "protect"):
+        # Keep each control inside the range understood by the DSP/RVC pipeline.
+        # In particular, the RVC blend controls are ratios, not arbitrary floats.
+        setting_ranges = {
+            "pitch_shift": (-24.0, 24.0),
+            "formant_shift": (-24.0, 24.0),
+            "index_rate": (0.0, 1.0),
+            "rms_mix_rate": (0.0, 1.0),
+            "protect": (0.0, 1.0),
+        }
+        for key, (minimum, maximum) in setting_ranges.items():
             if key not in data or data[key] is None:
                 continue
-            value = _bounded_float(data[key], -1.0e6, 1.0e6)
+            value = _bounded_float(data[key], minimum, maximum)
             if value is None:
-                logger.warning("Ignoring invalid %s value %r", key, data[key])
+                logger.warning("Ignoring out-of-range %s value %r", key, data[key])
                 continue
             conn_state[key] = value
         if "f0_method" in data and isinstance(data["f0_method"], str):

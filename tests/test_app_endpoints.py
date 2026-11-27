@@ -348,3 +348,32 @@ class TestWebSocketSettingsValidation:
 
         _apply_settings({"bypass": True}, state)
         assert state["bypass"] is True
+
+    def test_audio_settings_must_stay_within_supported_ranges(self):
+        from backend.routers.websocket import _apply_settings
+
+        state = {
+            "pitch_shift": 2.0,
+            "formant_shift": -1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
+        _apply_settings(
+            {
+                "pitch_shift": 25.0,
+                "formant_shift": -25.0,
+                "index_rate": 1.1,
+                "rms_mix_rate": -0.1,
+                "protect": 2.0,
+            },
+            state,
+        )
+
+        assert state == {
+            "pitch_shift": 2.0,
+            "formant_shift": -1.0,
+            "index_rate": 0.5,
+            "rms_mix_rate": 0.25,
+            "protect": 0.3,
+        }
