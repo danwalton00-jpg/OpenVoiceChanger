@@ -262,6 +262,11 @@ export default function useAudioPipeline(wsHook) {
         }
         audioContextRef.current = audioContext;
 
+        // Unlock Web Audio immediately while the Start button's user gesture
+        // is still active. iOS Safari can otherwise leave the context suspended
+        // if resume() is first called after microphone permission/module awaits.
+        const audioUnlock = audioContext.resume();
+
         // Canonical rate for everything downstream: WebSocket config, WAV
         // header, record timer. Asking for 40 kHz and getting 48 kHz would
         // otherwise mis-tune conversion and save recordings at the wrong speed.
@@ -377,7 +382,14 @@ export default function useAudioPipeline(wsHook) {
           }
         });
 
+        // Complete the early unlock and retry after graph construction. The
+        // second call is safe when already running and helps recover Safari's
+        // suspended state after permission prompts.
+        await audioUnlock;
         await audioContext.resume();
+        if (audioContext.state !== 'running') {
+          throw new Error(`Audio playback could not start (AudioContext state: ${audioContext.state}). Tap Start again and allow microphone access.`);
+        }
         startLevelLoop();
 
         setStreamInfo({
