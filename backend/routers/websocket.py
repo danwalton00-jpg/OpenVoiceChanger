@@ -107,6 +107,10 @@ async def audio_websocket(websocket: WebSocket) -> None:
 
     model_manager = getattr(websocket.app.state, "model_manager", None)
     if model_manager is None:
+        # The connection counter is incremented immediately after accept();
+        # release the slot here as this early exit happens before the main
+        # try/finally cleanup block.
+        _active_audio_connections = max(0, _active_audio_connections - 1)
         await websocket.close(code=1011, reason="Model manager not available")
         return
 
