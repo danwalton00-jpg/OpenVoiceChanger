@@ -161,8 +161,11 @@ async def convert_file(
 
     try:
         audio, sample_rate = await asyncio.to_thread(_load_audio, data, file.filename)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError:
+        # Decoder exceptions can include local paths and implementation
+        # details. Keep those in logs and return a stable client message.
+        logger.info("Rejected unsupported or invalid audio upload: %s", file.filename)
+        raise HTTPException(status_code=400, detail="Could not decode the uploaded audio file.")
 
     max_samples = settings.MAX_CONVERT_SECONDS * sample_rate
     if len(audio) > max_samples:
