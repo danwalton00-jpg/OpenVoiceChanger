@@ -177,7 +177,17 @@ function loadInitialVoice() {
 
 function loadInitialEffects() {
   const stored = readStored(EFFECTS_STORAGE_KEY);
-  return stored ? effectsFromPreset(stored) : defaultEffects();
+  const effects = stored ? effectsFromPreset(stored) : defaultEffects();
+
+  // Hosted mobile DSP: migrate older saved settings to a stronger, enabled
+  // output level so existing browser storage does not keep the old quiet gain.
+  effects.gain = {
+    ...effects.gain,
+    enabled: true,
+    db: Math.max(12, Number(effects.gain?.db) || 0),
+  };
+
+  return effects;
 }
 
 /** Drop ?settings from the address bar without adding a history entry. */
