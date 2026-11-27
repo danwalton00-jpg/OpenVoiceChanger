@@ -20,15 +20,21 @@ logger = logging.getLogger(__name__)
 
 def _clipf(value, lo: float, hi: float, default: float) -> float:
     try:
-        return float(np.clip(float(value), lo, hi))
-    except (TypeError, ValueError):
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return default
+        return float(np.clip(numeric, lo, hi))
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
 def _clipi(value, lo: int, hi: int, default: int) -> int:
     try:
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return default
         return int(np.clip(int(value), lo, hi))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
