@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
-from backend.routers import convert, github_star, models, presets, runtime_setup, updates, websocket
+from backend.routers import convert, elevenlabs, github_star, models, presets, runtime_setup, updates, websocket
 from backend.security import cors_origins
 from backend.services.model_manager import ModelManager
 from backend.services.preset_store import PresetStore
@@ -216,6 +216,7 @@ async def get_config():
 
 # Include API routers
 app.include_router(models.router)
+app.include_router(elevenlabs.router)
 app.include_router(presets.router)
 app.include_router(convert.router)
 app.include_router(github_star.router)
