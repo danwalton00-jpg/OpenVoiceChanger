@@ -61,9 +61,10 @@ export default function ElevenLabsVoiceChanger() {
         /female/i.test(voice.labels?.gender || '')
         && /american|genam/i.test(voice.labels?.accent || '')
       );
-      const nextVoice = preferred || firstAmericanFemale || available[0];
+      const nextVoice = preferred || firstAmericanFemale;
       setVoiceId(nextVoice?.voice_id || '');
       if (!available.length) setError('No voices were returned for this ElevenLabs account.');
+      else if (!nextVoice) setError('No American female voice was found in this account. Add one in ElevenLabs, then load voices again.');
     } catch (err) {
       setError(err.message || 'Could not load account voices.');
     } finally {
