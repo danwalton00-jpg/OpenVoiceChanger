@@ -11,6 +11,7 @@ import VoiceLab from './components/VoiceLab';
 import EffectsRack from './components/EffectsRack';
 import PresetBar from './components/PresetBar';
 import Recorder from './components/Recorder';
+import ElevenLabsVoiceChanger from './components/ElevenLabsVoiceChanger';
 import FileConverter from './components/FileConverter';
 import GitHubStarButton from './components/GitHubStarButton';
 import UpdateButton from './components/UpdateButton';
@@ -628,6 +629,7 @@ export default function App() {
               onStartingChange={setAudioStarting}
             />
             <Recorder pipeline={pipeline} />
+            <ElevenLabsVoiceChanger />
           </div>
 
           <div className="space-y-5">
