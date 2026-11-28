@@ -32,7 +32,7 @@ def get_configuration_status() -> dict:
     return {
         "provider": "elevenlabs",
         "mode": "opt_in_voice_changer",
-        "dry_run": True,
+        "dry_run": not bool(api_key and access_code),
         "external_requests_enabled": bool(api_key and access_code),
         "api_key_configured": bool(api_key),
         "access_code_configured": bool(access_code),
