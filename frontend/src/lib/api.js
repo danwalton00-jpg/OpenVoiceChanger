@@ -307,3 +307,37 @@ export function isAbortError(err) {
 export function fetchElevenLabsStatus(options = {}) {
   return request('/elevenlabs/status', { ...options, timeoutMs: 10000 });
 }
+
+
+// ElevenLabs: status is local-only; voices are fetched only after the user
+// supplies the server-side access code. Audio is uploaded only on conversion.
+export async function fetchElevenLabsVoices(accessCode) {
+  return request('/elevenlabs/voices', {
+    headers: { 'X-OVC-Voice-Access': accessCode },
+    timeoutMs: 25000,
+  });
+}
+
+export async function convertWithElevenLabs(file, voiceId, accessCode, signal) {
+  const formData = new FormData();
+  formData.append('audio', file);
+  formData.append('voice_id', voiceId);
+  let response;
+  try {
+    response = await fetch(`${API_BASE}/elevenlabs/convert`, {
+      method: 'POST',
+      headers: { 'X-OVC-Voice-Access': accessCode },
+      body: formData,
+      signal,
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    throw new ApiError(describeTransportError(err), 0, null);
+  }
+  if (!response.ok) {
+    let data = null;
+    try { data = await response.json(); } catch { /* non-JSON provider error */ }
+    throw new ApiError(data?.detail || `Voice conversion failed: ${response.status}`, response.status, data);
+  }
+  return response.blob();
+}
