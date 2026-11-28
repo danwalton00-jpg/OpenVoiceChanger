@@ -20,16 +20,19 @@ export default function ElevenLabsVoiceChanger() {
   const [result, setResult] = useState(null);
   const inputRef = useRef(null);
   const abortRef = useRef(null);
+  const resultUrlRef = useRef(null);
 
   useEffect(() => {
     fetchElevenLabsStatus().then(setStatus).catch(() => setStatus(null));
-    return () => {
-      abortRef.current?.abort();
-      if (result?.url) URL.revokeObjectURL(result.url);
-    };
-    // Result URL is cleaned when the component unmounts; this is intentionally
-    // a mount-only cleanup to avoid revoking a still-visible preview on updates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => abortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    resultUrlRef.current = result?.url || null;
+  }, [result]);
+
+  useEffect(() => () => {
+    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
   }, []);
 
   const selectedVoice = voices.find((voice) => voice.voice_id === voiceId);
