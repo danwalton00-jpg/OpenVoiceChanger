@@ -4,7 +4,6 @@ No provider request is made by /status. Paid conversion requires a server-side
 API key, a server-side access code, a valid account voice ID, and an explicit
 user action in the frontend.
 """
-import asyncio
 import hmac
 import os
 import time
@@ -37,7 +36,6 @@ def get_configuration_status() -> dict:
         "external_requests_enabled": bool(api_key and access_code),
         "api_key_configured": bool(api_key),
         "access_code_configured": bool(access_code),
-        "voice_id_configured": bool(os.environ.get("ELEVENLABS_VOICE_ID", "").strip()),
         "ready": bool(api_key and access_code),
         "rate_limit_per_hour": MAX_REQUESTS_PER_HOUR,
         "price_usd_per_audio_minute": 0.12,
@@ -134,11 +132,6 @@ async def convert_voice(
     """Convert one user-selected recording. This is the only paid endpoint."""
     api_key, _ = _require_access_code(x_ovc_voice_access)
     _check_rate_limit(request)
-
-    configured_voice = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
-    if configured_voice and voice_id != configured_voice:
-        # A configured server-side voice is an allowlist, not a browser override.
-        raise HTTPException(status_code=400, detail="The selected voice does not match the server-approved voice ID.")
 
     filename = (audio.filename or "").lower()
     allowed_extensions = (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".webm", ".flac")
