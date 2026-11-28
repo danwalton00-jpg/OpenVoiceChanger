@@ -60,7 +60,8 @@ def _require_access_code(provided: str | None) -> tuple[str, str]:
 
 
 def _check_rate_limit(request: Request) -> None:
-    client_ip = request.client.host if request.client else "unknown"
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = forwarded_for or request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
     now = time.monotonic()
     events = _rate_events[client_ip]
     while events and now - events[0] > 3600:
